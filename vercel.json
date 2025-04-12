@@ -1,0 +1,16 @@
+{
+    "version": 2,
+    "builds": [
+      {
+        "src": "api/upload.js",
+        "use": "@vercel/node"
+      }
+    ],
+    "routes": [
+      {
+        "src": "/upload-vtt",
+        "dest": "api/upload.js"
+      }
+    ]
+  }
+  
