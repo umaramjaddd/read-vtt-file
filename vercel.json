@@ -8,9 +8,8 @@
     ],
     "routes": [
       {
-        "src": "/upload-vtt",
+        "src": "/(.*)",
         "dest": "api/upload.js"
       }
     ]
   }
-  
