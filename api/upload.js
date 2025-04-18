@@ -2,6 +2,8 @@ const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios'); 
+const qs = require('querystring');
 
 const app = express();
 const isVercel = process.env.VERCEL === '1';
@@ -37,50 +39,94 @@ app.get('/', (req, res) => {
   res.send('VTT File Processor API - POST your VTT files to /upload-vtt');
 });
 
-// Upload and process VTT route
-app.post('/upload-vtt', upload.single('file'), async (req, res) => {
+
+
+// Zoom OAuth Credentials (from environment variables)
+const ZOOM_CLIENT_ID = "7LMARfR7Qxies3TR_A1Gdw";
+const ZOOM_CLIENT_SECRET = "BU2oGSIYFEwmL8ENMZjzNn5FuJWSKh0Y";
+const ZOOM_ACCOUNT_ID = "NPmpj715Rk-FbfUPxqUchA"; // Required for server-to-server OAuth
+
+// Helper function to get Zoom OAuth token
+async function getZoomOAuthToken() {
+  const authString = Buffer.from(`${ZOOM_CLIENT_ID}:${ZOOM_CLIENT_SECRET}`).toString('base64');
+
+  const response = await axios.post(
+    'https://zoom.us/oauth/token',
+    qs.stringify({
+      grant_type: 'account_credentials',
+      account_id: ZOOM_ACCOUNT_ID,
+    }),
+    {
+      headers: {
+        'Authorization': `Basic ${authString}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    }
+  );
+
+  return response.data.access_token;
+}
+
+// Updated endpoint
+app.post('/upload-vtt-url', async (req, res) => {
+  const { meetingId } = req.body; // Only meetingId is needed now
+
   try {
-    // Validate file exists
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
+    // 1. Get OAuth token
+    const accessToken = await getZoomOAuthToken();
 
-    const filePath = req.file.path;
-    
-    try {
-      // Read and process file
-      const rawText = await fs.promises.readFile(filePath, 'utf8');
-      const cleanedText = extractTranscript(rawText);
-
-      // Clean up file
-      await fs.promises.unlink(filePath);
-
-      // Return successful response
-      return res.json({ 
-        success: true,
-        data: cleanedText,
-        originalLength: rawText.length,
-        processedLength: cleanedText.length
-      });
-      
-    } catch (fileError) {
-      // Clean up file if something went wrong
-      if (fs.existsSync(filePath)) {
-        await fs.promises.unlink(filePath).catch(console.error);
+    // 2. Fetch recording details
+    const recordingResponse = await axios.get(
+      `https://api.zoom.us/v2/meetings/${meetingId}/recordings`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
       }
-      throw fileError;
+    );
+
+    // 3. Find VTT transcript
+    const vttFile = recordingResponse.data.recording_files.find(
+      file => file.file_type === 'TRANSCRIPT' && file.file_extension === 'VTT'
+    );
+
+    if (!vttFile) {
+      return res.status(404).json({ error: 'No VTT transcript found' });
     }
+
+    // 4. Download VTT file
+    const vttResponse = await axios.get(vttFile.download_url, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+      },
+      responseType: 'text',
+    });
+
+    const cleanedText = extractTranscript(vttResponse.data);
+
+    return res.json({
+      success: true,
+      data: cleanedText,
+    });
 
   } catch (err) {
-    console.error('Error processing file:', err);
-    
-    return res.status(500).json({ 
-      error: 'Failed to process file',
-      message: err.message,
-      ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    console.error('Zoom API Error:', err.response?.data || err.message);
+    return res.status(500).json({
+      error: 'Failed to fetch transcript',
+      details: err.response?.data || err.message,
     });
   }
 });
+
+// Helper function to generate Zoom JWT
+function generateZoomJWT(apiKey, apiSecret) {
+  const payload = {
+    iss: apiKey,
+    exp: Math.floor(Date.now() / 1000) + 60 * 60 // 1 hour expiration
+  };
+  
+  return jwt.sign(payload, apiSecret);
+}
 
 // Helper function to extract transcript
 function extractTranscript(text) {
