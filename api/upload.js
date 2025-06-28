@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios'); 
 const qs = require('querystring');
+const crypto = require('crypto');
 
 const app = express();
 const isVercel = process.env.VERCEL === '1';
@@ -117,6 +118,55 @@ app.post('/upload-vtt-url', async (req, res) => {
     });
   }
 });
+
+
+app.post('/zoom-webhook', async(req, res) => {
+try {
+  if (req.body.event === "endpoint.url_validation")
+{
+   const plainToken = req.body.payload.plainToken;
+
+      // HMAC SHA256 using the secret
+      const secret = '3iKeMrfrRou1Wxjo2hYAzw';
+      const hmac = crypto.createHmac('sha256', secret)
+                         .update(plainToken)
+                         .digest('hex');
+
+      return res.status(200).json({
+        plainToken: plainToken,
+        encryptedToken: hmac,
+        status: "success"
+      });
+  }
+
+  if (req.body.event=== "recording.transcript_completed")
+  {
+     const bubbleURL = "https://giocuhna.bubbleapps.io/version-test/api/1.1/wf/transctipt_completed_2_copy_copy/";
+
+      const response = await axios.post(bubbleURL, req.body, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      return res.status(200).json({
+        status: "Forwarded to Bubble",
+        bubbleStatus: response.status,
+        bubbleResponse: response.data
+      });
+  }
+
+else
+    return res.status(200).json({nice: "nothing"});
+} catch (error) {
+  console.log(error);
+  
+  return res.status(500).json({ error: error.message });
+  
+
+}
+})
+
+
+
 
 // Helper function to generate Zoom JWT
 function generateZoomJWT(apiKey, apiSecret) {
